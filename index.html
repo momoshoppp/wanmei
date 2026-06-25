@@ -302,6 +302,7 @@
           const [storeConfig, setStoreConfig] = useState({ 
               freeShippingThreshold: 1500, 
               myshipUrl: '', 
+              lineOaId: '',
               bankName: '',
               bankCode: '',
               bankAccount: '',
@@ -309,6 +310,7 @@
           });
           const [newFreeShippingThreshold, setNewFreeShippingThreshold] = useState('');
           const [newMyshipUrl, setNewMyshipUrl] = useState('');
+          const [newLineOaId, setNewLineOaId] = useState('');
           const [newBankName, setNewBankName] = useState('');
           const [newBankCode, setNewBankCode] = useState('');
           const [newBankAccount, setNewBankAccount] = useState('');
@@ -430,6 +432,7 @@
                     setNewBankCode(config.bankCode || '');
                     setNewBankAccount(config.bankAccount || '');
                     setNewBankHolder(config.bankHolder || '');
+                    setNewLineOaId(config.lineOaId || '');
                 }
             });
             const unsubPromo = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'promotion'), (d) => {
@@ -925,6 +928,8 @@
           }, [user, orders, autoArchiveChecked]);
 
           const sendMessageToCustomer = (group, type) => {
+              // ✅ 動態讀取：優先用 Firebase 設定的值，再用預設
+              const activeLineOaId = storeConfig.lineOaId || LINE_OA_ID;
               const itemList = Object.entries(group.codeGroups).map(([code, cg]) => `${code} x${cg.totalQty}`).join('、');
               let msg = '';
               switch (type) {
@@ -945,7 +950,7 @@
                   } catch (e) {}
                   window.open(url, '_blank', 'noopener,noreferrer');
               } else {
-                  url = `https://line.me/R/oaMessage/@${LINE_OA_ID}/?${encodeURIComponent(msg)}`;
+                  url = `https://line.me/R/oaMessage/@${activeLineOaId}/?${encodeURIComponent(msg)}`;
                   window.open(url, '_blank', 'noopener,noreferrer');
                   showMessage("已開啟 LINE，可在官方帳號找客人傳訊");
               }
@@ -1741,10 +1746,21 @@
                           <label className="text-[11px] font-bold text-[#555555] flex items-center gap-1 uppercase tracking-tighter"><LinkIcon size={12}/> 賣貨便網址</label>
                           <input value={newMyshipUrl} onChange={e => setNewMyshipUrl(e.target.value)} className="w-full py-4 px-5 bg-[#F5F1EA] rounded-2xl text-xs font-bold outline-none"/>
                         </div>
-                        <div className="bg-[#F1F4E8] rounded-2xl p-4 border border-[#C9D4B0] space-y-1">
-                            <div className="text-[11px] font-bold text-[#6B7A4A] flex items-center gap-1"><MessageCircle size={12}/> LINE 官方帳號設定</div>
-                            <div className="text-xs font-black text-[#3A3A3A]">@{LINE_OA_ID}</div>
-                            <div className="text-[10px] text-[#555555] font-bold">客人點「通知我已下單」會跳至此帳號</div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-bold text-[#555555] flex items-center gap-1 uppercase tracking-tighter">
+                              <MessageCircle size={12}/> LINE 官方帳號 ID
+                          </label>
+                          <div className="flex items-center bg-[#F5F1EA] rounded-2xl px-4 py-3 border border-[#EDE6DA]">
+                              <span className="text-[#888888] font-bold mr-1 shrink-0">@</span>
+                              <input
+                                  type="text"
+                                  value={newLineOaId}
+                                  onChange={e => setNewLineOaId(e.target.value.replace(/^@/, ''))}
+                                  placeholder="輸入 LINE 官方帳號 ID（不含 @）"
+                                  className="flex-1 bg-transparent text-xs font-bold outline-none text-[#3A3A3A] placeholder:text-[#AAAAAA] placeholder:font-normal"
+                              />
+                          </div>
+                          <p className="text-[10px] text-[#6B6B6B] font-bold">客人收到訊息後會連結到此帳號</p>
                         </div>
                         <div className="bg-[#F5F1EA] rounded-2xl p-4 border border-[#EDE6DA] space-y-3">
                             <div className="flex items-center gap-1.5 text-[10px] font-black text-[#6B6B6B] uppercase tracking-wider"><CreditCard size={12}/> 匯款帳號設定</div>
@@ -1761,6 +1777,7 @@
                                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'storeConfig'), {
                                     freeShippingThreshold: Number(newFreeShippingThreshold),
                                     myshipUrl: newMyshipUrl,
+                                    lineOaId: newLineOaId.trim().replace(/^@/, ''),
                                     bankName: newBankName.trim(), bankCode: newBankCode.trim(),
                                     bankAccount: newBankAccount.trim(), bankHolder: newBankHolder.trim()
                                 });
