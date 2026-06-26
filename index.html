@@ -1773,16 +1773,23 @@
                             <div className="text-[10px] text-[#555555] font-bold leading-relaxed">💡 客人有訂單時才會在買家端看到此資訊</div>
                         </div>
                         <button onClick={async () => {
-                            if (user) {
+                            if (!user) {
+                                showMessage("尚未連線雲端，請稍後再試 ⚠️", 'error');
+                                return;
+                            }
+                            try {
                                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'storeConfig'), {
-                                    freeShippingThreshold: Number(newFreeShippingThreshold),
-                                    myshipUrl: newMyshipUrl,
+                                    freeShippingThreshold: Number(newFreeShippingThreshold) || 1500,
+                                    myshipUrl: newMyshipUrl.trim(),
                                     lineOaId: newLineOaId.trim().replace(/^@/, ''),
                                     bankName: newBankName.trim(), bankCode: newBankCode.trim(),
                                     bankAccount: newBankAccount.trim(), bankHolder: newBankHolder.trim()
                                 });
                                 showMessage("系統設定已儲存 ✅");
-                            } else { showMessage("目前處於暫存模式，無法儲存", 'warn'); }
+                            } catch (err) {
+                                console.error("儲存失敗：", err);
+                                showMessage("儲存失敗：" + (err.message || err.code || "請確認網路連線"), 'error');
+                            }
                         }} className="w-full py-4 bg-[#333] text-white rounded-2xl text-xs font-bold shadow-lg active:scale-95 transition-all">儲存設定</button>
                     </div>
 
