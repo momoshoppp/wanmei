@@ -61,7 +61,7 @@
         import React, { useState, useEffect, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import { initializeApp } from 'firebase/app';
-        import { getFirestore, collection, doc, onSnapshot, setDoc, writeBatch, serverTimestamp, deleteDoc } from 'firebase/firestore';
+        import { getFirestore, collection, doc, onSnapshot, setDoc, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
         import { Lock, Plus, X, Sparkles, Loader2, User, DollarSign, Trash2, Settings, ListChecks, Copy, AlertTriangle, FileText, Truck, Link as LinkIcon, Calendar, CheckCircle, MessageCircle, Phone, Package, PackageCheck, PackageX, ShoppingCart, Users, RefreshCw, Search, Filter, Send, Bell, DollarSign as MoneyIcon, Fingerprint, Shield, ShieldCheck, RotateCcw, Gift, Wallet, TrendingUp, TrendingDown, History, Minus, Printer, FileOutput, MapPin, CreditCard, BarChart3, ChevronRight, ChevronDown, Tag, Zap, Clock, ToggleLeft, ToggleRight } from 'lucide-react';
 
@@ -385,6 +385,8 @@
 
           // ✅ 新增：揀貨單列印設定
           const [pickingModal, setPickingModal] = useState(false);
+          const [mergeMode, setMergeMode] = useState(false);
+          const [selectedForMerge, setSelectedForMerge] = useState(new Set());
           const [pickingFilter, setPickingFilter] = useState('completed'); // 預設「已結單」
           const [pickingDate, setPickingDate] = useState(''); // 空=全部日期
 
@@ -521,15 +523,27 @@
             const groups = {};
             orders.forEach(o => {
               const name = o.customerName || '未知';
-              // ✅ v1.1.1: 同名+同日期才合併
-              const orderDate = o.createdAt?.seconds ? new Date(o.createdAt.seconds * 1000) : new Date();
-              const dateKey = `${orderDate.getFullYear()}-${String(orderDate.getMonth()+1).padStart(2,'0')}-${String(orderDate.getDate()).padStart(2,'0')}`;
-              const groupKey = `${name}__${dateKey}`;
+              // ✅ 支援合併訂單：有 mergeGroupId 的訂單歸同一組
+              let groupKey;
+              if (o.mergeGroupId) {
+                  groupKey = `merged__${o.mergeGroupId}`;
+              } else {
+                  const orderDate = o.createdAt?.seconds ? new Date(o.createdAt.seconds * 1000) : new Date();
+                  const dateKey = `${orderDate.getFullYear()}-${String(orderDate.getMonth()+1).padStart(2,'0')}-${String(orderDate.getDate()).padStart(2,'0')}`;
+                  groupKey = `${name}__${dateKey}`;
+              }
               if (!groups[groupKey]) groups[groupKey] = {
-                  name, items: [], codeGroups: {}, itemTotal: 0, finalTotal: 0,
-                  status: 'pending', date: o.createdAt, customerLineId: o.customerLineId || ''
+                  name, _key: groupKey, _isMerged: !!o.mergeGroupId, _mergeId: o.mergeGroupId || null,
+                  items: [], codeGroups: {}, itemTotal: 0, finalTotal: 0,
+                  status: 'pending', date: o.createdAt, customerLineId: o.customerLineId || '',
+                  dates: []
               };
               groups[groupKey].items.push(o);
+              // 收集所有日期（顯示日期範圍用）
+              if (o.createdAt?.seconds) {
+                  const d = formatFullDate(o.createdAt);
+                  if (!groups[groupKey].dates.includes(d)) groups[groupKey].dates.push(d);
+              }
               if (!groups[groupKey].codeGroups[o.itemCode]) {
                   groups[groupKey].codeGroups[o.itemCode] = { items: [], totalQty: 0, priceStr: o.price };
               }
@@ -1350,6 +1364,42 @@
           }, [orders]);
 
           // ✅ 新增：傳訊給客人（根據類型組不同訊息）
+          // ── 合併訂單 ──────────────────────────────────────────────
+          const mergeSelectedOrders = async () => {
+              if (selectedForMerge.size < 2) { showMessage("請至少選取 2 筆訂單", 'warn'); return; }
+              const mergeId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+              const targetGroups = groupedOrders.filter(g => selectedForMerge.has(g._key));
+              if (!user) { showMessage("請先連線雲端", 'error'); return; }
+              try {
+                  const batch = writeBatch(db);
+                  targetGroups.forEach(g => {
+                      g.items.forEach(item => {
+                          if (!item.id.startsWith('local-'))
+                              batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'orders', item.id), { mergeGroupId: mergeId });
+                      });
+                  });
+                  await batch.commit();
+                  setMergeMode(false);
+                  setSelectedForMerge(new Set());
+                  showMessage(`✅ 已合併 ${targetGroups.length} 筆訂單`);
+              } catch (err) { showMessage("合併失敗：" + (err.message || err.code), 'error'); }
+          };
+
+          const unmergeGroup = async (group) => {
+              if (!user || !group._isMerged) return;
+              if (!confirm(`確定解除「${group.name}」的合併訂單？
+訂單會依原始日期分開顯示。`)) return;
+              try {
+                  const batch = writeBatch(db);
+                  group.items.forEach(item => {
+                      if (!item.id.startsWith('local-'))
+                          batch.update(doc(db, 'artifacts', appId, 'public', 'data', 'orders', item.id), { mergeGroupId: deleteField() });
+                  });
+                  await batch.commit();
+                  showMessage("已解除合併");
+              } catch (err) { showMessage("解除失敗：" + (err.message || err.code), 'error'); }
+          };
+
           const sendMessageToCustomer = (group, type) => {
               const activeLineOaId = storeConfig.lineOaId || LINE_OA_ID;
               const itemList = Object.entries(group.codeGroups)
@@ -1600,6 +1650,7 @@
                                 className="w-full py-3 bg-[#3A3A3A] text-white rounded-xl text-[10px] font-bold flex items-center justify-center gap-1.5 active:scale-95 shadow-md">
                                 <Printer size={14}/> 列印揀貨單
                             </button>
+
                         </div>
                     </div>
 
@@ -1657,6 +1708,16 @@
                         </div>
 
                         {/* ✅ 新增：批次歸檔按鈕（只有本月有已寄出時顯示） */}
+                        {/* 合併訂單按鈕 */}
+                        <button onClick={() => { setMergeMode(!mergeMode); setSelectedForMerge(new Set()); }}
+                            className={`w-full py-3 rounded-2xl text-[11px] font-black flex items-center justify-center gap-2 transition-all border ${mergeMode
+                                ? 'bg-[#3A3A3A] text-white border-[#3A3A3A] shadow-md'
+                                : 'bg-white text-[#555555] border-[#DDD2BE]'}`}>
+                            {mergeMode
+                                ? <><span className="text-xs">✕</span> 取消合併模式</>
+                                : <><span>🔗</span> 合併客人不同日期的訂單</>}
+                        </button>
+
                         {(() => {
                             const now = new Date();
                             const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -1684,6 +1745,7 @@
                             );
                         })()}
 
+
                         {(searchQuery || statusFilter !== 'all' || monthFilter !== 'all' || hideShipped) && (
                             <div className="text-[10px] font-bold text-[#555555] text-center">
                                 找到 {filteredOrders.length} 筆訂單
@@ -1701,8 +1763,19 @@
                     <div className="space-y-4">
                         {filteredOrders.map((g, i) => (
                           <div key={i} className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-white space-y-4 animate-in relative">
-                            <div className="absolute top-6 right-6 flex items-center gap-1 text-[11px] font-black italic text-[#6B6B6B]">
-                                <Calendar size={10}/> {formatDate(g.date)}
+                            <div className="absolute top-6 right-6 flex items-center gap-2">
+                                {g._isMerged && !mergeMode && (
+                                    <button onClick={e => { e.stopPropagation(); unmergeGroup(g); }}
+                                        className="flex items-center gap-1 bg-[#EDE2CC] text-[#8A6D3B] px-2 py-1 rounded-full text-[9px] font-black border border-[#C9B88A] active:scale-95">
+                                        🔗 合併 · 點解除
+                                    </button>
+                                )}
+                                <span className="text-[11px] font-black italic text-[#6B6B6B] flex items-center gap-1">
+                                    <Calendar size={10}/>
+                                    {g._isMerged && g.dates && g.dates.length > 1
+                                        ? `${g.dates[g.dates.length-1].slice(5)} ~ ${g.dates[0].slice(5)}`
+                                        : formatDate(g.date)}
+                                </span>
                             </div>
                             <div className="flex justify-between items-start pr-10">
                               <div className="flex items-center gap-3">
@@ -2991,6 +3064,24 @@
                   </div>
                 )}
               </main>
+
+              {/* 合併訂單浮動操作列 */}
+              {mergeMode && (
+                  <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[75] animate-in">
+                      <div className="bg-[#3A3A3A] rounded-[2rem] px-5 py-4 shadow-2xl flex items-center gap-4 min-w-[280px]">
+                          <div className="text-white">
+                              <div className="text-xs font-black">已選 {selectedForMerge.size} 筆</div>
+                              <div className="text-[10px] text-[#AAAAAA] font-bold">
+                                  {selectedForMerge.size < 2 ? '再選一筆來合併' : '點右側按鈕合併'}
+                              </div>
+                          </div>
+                          <button onClick={mergeSelectedOrders} disabled={selectedForMerge.size < 2}
+                              className="ml-auto px-5 py-2.5 bg-[#B8A582] text-white rounded-xl text-xs font-black disabled:opacity-40 active:scale-95 transition-all whitespace-nowrap">
+                              🔗 確認合併
+                          </button>
+                      </div>
+                  </div>
+              )}
 
               {/* ✅ 列印揀貨單 Modal ── */}
               {pickingModal && (
