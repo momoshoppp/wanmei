@@ -1762,7 +1762,29 @@
 
                     <div className="space-y-4">
                         {filteredOrders.map((g, i) => (
-                          <div key={i} className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-white space-y-4 animate-in relative">
+                          <div key={i}
+                              onClick={mergeMode ? () => {
+                                  const next = new Set(selectedForMerge);
+                                  next.has(g._key) ? next.delete(g._key) : next.add(g._key);
+                                  setSelectedForMerge(next);
+                              } : undefined}
+                              className={`rounded-[2.5rem] p-6 shadow-sm border space-y-4 animate-in relative transition-all
+                                  ${mergeMode
+                                      ? selectedForMerge.has(g._key)
+                                          ? 'bg-[#FFF8EE] border-[#B8A582] shadow-[0_0_0_2.5px_#B8A582] cursor-pointer'
+                                          : 'bg-white border-[#DDD2BE] cursor-pointer'
+                                      : 'bg-white border-white'}`}>
+                            {/* 合併模式勾選圓圈 */}
+                            {mergeMode && (
+                                <div className="absolute top-4 left-4 z-10">
+                                    <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center font-black text-sm shadow-sm transition-all
+                                        ${selectedForMerge.has(g._key)
+                                            ? 'bg-[#B8A582] border-[#B8A582] text-white'
+                                            : 'bg-[#F5F1EA] border-[#8A7864] text-[#8A7864]'}`}>
+                                        {selectedForMerge.has(g._key) ? '✓' : '○'}
+                                    </div>
+                                </div>
+                            )}
                             <div className="absolute top-6 right-6 flex items-center gap-2">
                                 {g._isMerged && !mergeMode && (
                                     <button onClick={e => { e.stopPropagation(); unmergeGroup(g); }}
@@ -1777,7 +1799,7 @@
                                         : formatDate(g.date)}
                                 </span>
                             </div>
-                            <div className="flex justify-between items-start pr-10">
+                            <div className={`flex justify-between items-start pr-10 ${mergeMode ? 'pl-9' : ''}`}>
                               <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-[#F5F1EA] flex items-center justify-center text-[#B8A582]">
                                     <User size={18}/>
@@ -3072,7 +3094,11 @@
                           <div className="text-white">
                               <div className="text-xs font-black">已選 {selectedForMerge.size} 筆</div>
                               <div className="text-[10px] text-[#AAAAAA] font-bold">
-                                  {selectedForMerge.size < 2 ? '再選一筆來合併' : '點右側按鈕合併'}
+                                  {selectedForMerge.size === 0
+                                      ? '👆 點上方訂單卡片選取'
+                                      : selectedForMerge.size === 1
+                                          ? '再點一張來合併'
+                                          : '✅ 點右側確認合併'}
                               </div>
                           </div>
                           <button onClick={mergeSelectedOrders} disabled={selectedForMerge.size < 2}
